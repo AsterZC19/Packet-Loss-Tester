@@ -20,6 +20,14 @@ import { encodeDataFrame, decodeEchoFrame } from './protocol.js';
 const WARMUP_MS = 1000; // skip first second of echoes in stats (SCTP cwnd ramp)
 const BUCKET_MS = 200; // trend chart bucket width
 const SETTLE_TIMEOUT_MS = 4000; // max wait for summary after stop
+const MAX_BUCKET_SAMPLES = 1024; // cap raw RTT samples kept per bucket (for trend P95)
+const MAX_SENDS_PER_TICK = 64; // catch-up cap per timer tick (see _tick)
+
+// 激进模式安全水位:固定速率发送时,浏览器本地 SCTP 发送缓冲只增不减。
+// 默认低水位(几 KB)的自节流会让工具在链路差时"不发",从而观测不到丢包;
+// 激进模式把这个水位抬到 8MB,只在链路基本断了的时候才停,防止内存失控。
+const AGGRESSIVE_HIGH_WATER = 8 * 1024 * 1024;
+const AGGRESSIVE_LOW_WATER = AGGRESSIVE_HIGH_WATER / 2;
 
 function percentile(sorted, p) {
   if (!sorted.length) return 0;
@@ -71,8 +79,16 @@ export class WebrtcTestClient {
     this.jitterDeltas = [];
     this.lateCount = 0;
     this.statEchoCount = 0;
-    this.buckets = new Map(); // bucketIndex -> {n, sum, max, late}
+    this.buckets = new Map(); // bucketIndex -> {n, sum, max, late, rtts}
     this.summary = null;
+
+    // live 面板状态
+    this.liveSrvRecv = 0; // 最近一次 live 里服务器实收 DATA 数(实时上行丢包,滞后约一个 RTT)
+    this.liveSrvEcho = 0; // 最近一次 live 里服务器实发 ECHO 数(实时下行丢包)
+    this.aggressive = false; // 激进模式:固定速率发送,不靠背压降速
+    this._aggCapNotified = false; // 8MB 水位提示只报一次
+    this._liveP95Val = 0; // 实时 p95 缓存
+    this._liveP95Len = -1; // 缓存对应的样本数(变了才重算)
   }
 
   // ---- lifecycle -----------------------------------------------------------
@@ -164,6 +180,16 @@ export class WebrtcTestClient {
     this.test.onbufferedamountlow = () => {
       this.paused = false;
     };
+    this.test.onclose = () => {
+      this.testOpen = false;
+      if (!this.running) return;
+      // 通道关闭无法继续:停止计时,用已收到样本估算结果,并明确提示中断。
+      // 之前这个回调缺失,走到 WiFi 边缘通道断了会静默"装死",看起来像一切正常。
+      clearTimeout(this.timer);
+      this.running = false;
+      this.onEvent('error', { message: '测试数据通道已关闭 — 连接中断,结果按已收到样本估算。' });
+      this._finalize(this._estimatedSummary());
+    };
 
     pc.createOffer()
       .then((offer) => pc.setLocalDescription(offer))
@@ -240,6 +266,9 @@ export class WebrtcTestClient {
         this.onEvent('serverready', {});
         break;
       case 'live':
+        // 服务器每 250ms 推一次实收/实发计数,供实时丢包显示(滞后约一个 RTT)。
+        this.liveSrvRecv = msg.srvRecvCount ?? 0;
+        this.liveSrvEcho = msg.srvEchoCount ?? 0;
         this.onEvent('live', msg);
         break;
       case 'summary':
@@ -267,8 +296,15 @@ export class WebrtcTestClient {
 
     // pacing parameters
     const lowWater = Math.max(4 * cfg.size, 4096);
-    this.test.bufferedAmountLowThreshold = lowWater;
-    this.highWater = lowWater * 4;
+    if (this.aggressive) {
+      // 激进模式:固定速率发送,像游戏/实时应用一样不自我节流。
+      // 只留 8MB 安全水位防本地缓冲无限堆积(OOM 保护),见 _tick。
+      this.test.bufferedAmountLowThreshold = AGGRESSIVE_LOW_WATER;
+      this.highWater = AGGRESSIVE_HIGH_WATER;
+    } else {
+      this.test.bufferedAmountLowThreshold = lowWater;
+      this.highWater = lowWater * 4;
+    }
     this.intervalMs = 1000 / cfg.pps;
     this.nextSendAt = performance.now() + this.intervalMs;
     this.timer = setTimeout(() => this._tick(), this.intervalMs);
@@ -290,25 +326,42 @@ export class WebrtcTestClient {
     this.statEchoCount = 0;
     this.buckets.clear();
     this.summary = null;
+    this.liveSrvRecv = 0;
+    this.liveSrvEcho = 0;
+    this.aggressive = !!cfg.aggressive;
+    this._aggCapNotified = false;
+    this._liveP95Val = 0;
+    this._liveP95Len = -1;
   }
 
   _tick() {
-    this.nextSendAt += this.intervalMs;
-    if (!this.running) return;
-    if (this.paused) return this._scheduleTick();
-
-    if (this.test && this.test.readyState === 'open') {
+    const now = performance.now();
+    let sentThisTick = 0;
+    // 一次回调内补齐到期应发的包。浏览器把嵌套 setTimeout 钳到 ≥4ms,
+    // 高 pps(尤其激进模式)时靠这个 catch-up 循环维持实际速率,而不是掉速。
+    while (this.running && this.nextSendAt <= now && sentThisTick < MAX_SENDS_PER_TICK) {
+      this.nextSendAt += this.intervalMs;
+      if (this.paused) break;
+      if (!this.test || this.test.readyState !== 'open') break;
       if (this.test.bufferedAmount >= this.highWater) {
-        this.paused = true; // local queue full — wait for bufferedamountlow
-        return this._scheduleTick();
+        this.paused = true; // 本地队列满 — 等 bufferedamountlow 再继续
+        if (this.aggressive && !this._aggCapNotified) {
+          this._aggCapNotified = true;
+          this.onEvent('notice', { message: '激进模式下发送缓冲积压≥8MB,链路几乎已断,结果将明显失真。' });
+        }
+        break;
       }
       this._sendOne();
+      sentThisTick++;
     }
-    this._scheduleTick();
+    // 停止后不要再排下一次(_finish 已清掉 timer,这里若再排会永久空转)。
+    if (this.running) this._scheduleTick();
   }
 
   _scheduleTick() {
-    const delay = Math.max(0, this.nextSendAt - performance.now());
+    // paused 时缓轮询(50ms),避免紧循环空转烧 CPU;正常时按 nextSendAt 精确排程。
+    const target = this.paused ? performance.now() + 50 : this.nextSendAt;
+    const delay = Math.max(0, target - performance.now());
     this.timer = setTimeout(() => this._tick(), delay);
   }
 
@@ -376,31 +429,63 @@ export class WebrtcTestClient {
 
     // trend buckets include everything
     const idx = Math.floor((now - this.testStartAt) / BUCKET_MS);
-    const b = this.buckets.get(idx) || { n: 0, sum: 0, max: 0, late: 0 };
+    let b = this.buckets.get(idx);
+    if (!b) {
+      b = { n: 0, sum: 0, max: 0, late: 0, rtts: [] };
+      this.buckets.set(idx, b);
+    }
     b.n++;
     b.sum += rtt;
     if (rtt > b.max) b.max = rtt;
     if (rtt > this.cfg.thresholdMs) b.late++;
-    this.buckets.set(idx, b);
+    if (b.rtts.length < MAX_BUCKET_SAMPLES) b.rtts.push(rtt); // 保原始样本,趋势图 P95 用
   }
 
   getLive() {
     const n = this.rtts.length;
     const avgRtt = n ? this.rtts.reduce((a, b) => a + b, 0) / n : 0;
+    const sent = this.sentTotal;
+    const srvRecv = this.liveSrvRecv;
+    const srvEcho = this.liveSrvEcho;
+    // 实时丢包:服务器 live 计数滞后约一个 RTT+250ms。开头 1 秒不显示,
+    // 避免启动瞬间"100% 丢包"的假象;权威数字以结束时的 summary 为准。
+    const elapsed = performance.now() - this.testStartAt;
+    const settled = elapsed >= WARMUP_MS;
+    const upLoss = settled && sent >= 5 ? Math.max(0, ((sent - srvRecv) / sent) * 100) : 0;
+    const downLoss = settled && srvEcho >= 5 ? Math.max(0, ((srvEcho - this.recvEchoSeen.size) / srvEcho) * 100) : 0;
     return {
-      elapsed: performance.now() - this.testStartAt,
+      elapsed,
       duration: this.cfg.durationMs,
-      sentTotal: this.sentTotal,
+      sentTotal: sent,
       recvEcho: this.recvEchoSeen.size,
       avgRtt,
+      p95Rtt: this._liveP95(),
+      upLoss,
+      downLoss,
     };
+  }
+
+  _liveP95() {
+    // 样本数变了才重排一次(progress 每 200ms 一次,避免每次全量 sort)。
+    if (this.rtts.length !== this._liveP95Len) {
+      const sorted = [...this.rtts].sort((a, b) => a - b);
+      this._liveP95Val = percentile(sorted, 0.95);
+      this._liveP95Len = this.rtts.length;
+    }
+    return this._liveP95Val;
   }
 
   getTrendSeries() {
     const idxs = [...this.buckets.keys()].sort((a, b) => a - b);
     return idxs.map((i) => {
       const b = this.buckets.get(i);
-      return { t: (i * BUCKET_MS) / 1000, avg: b.sum / b.n, max: b.max, late: b.late };
+      const r = b.rtts;
+      let p95 = 0;
+      if (r.length) {
+        const sorted = r.length > 1 ? [...r].sort((a, b) => a - b) : r;
+        p95 = percentile(sorted, 0.95);
+      }
+      return { t: (i * BUCKET_MS) / 1000, avg: b.sum / b.n, p95, max: b.max, late: b.late };
     });
   }
 

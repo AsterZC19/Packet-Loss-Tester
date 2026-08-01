@@ -122,8 +122,33 @@ export class TrendChart {
     ctx.fillText(`阈值 ${fmtMs(this.thresholdMs)}`, pad.l + 4, Math.max(pad.t + 8, Y(this.thresholdMs) - 8));
     ctx.restore();
 
-    // ---- RTT line ----
+    // ---- RTT lines: 平均(蓝) / P95(橙) / 最大(红) ----
     if (this.series.length) {
+      // max —— 细红线,单包尖峰一眼可见(这才是踢掉你的那一下)
+      ctx.strokeStyle = 'rgba(239, 75, 65, 0.85)';
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      this.series.forEach((p, i) => {
+        const x = X(p.t);
+        const y = Y(p.max);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      // p95 —— 橙线
+      ctx.strokeStyle = '#f2792b';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      this.series.forEach((p, i) => {
+        const x = X(p.t);
+        const y = Y(p.p95);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      // avg —— 蓝主曲线
       ctx.strokeStyle = '#29abe2';
       ctx.lineWidth = 1.6;
       ctx.beginPath();

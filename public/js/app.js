@@ -24,6 +24,10 @@ const els = {
   liveSent: $('live-sent'),
   liveRecv: $('live-recv'),
   liveRtt: $('live-rtt'),
+  liveP95: $('live-p95'),
+  liveUpLoss: $('live-up-loss'),
+  liveDownLoss: $('live-down-loss'),
+  aggressive: $('aggressive'),
 
   resultPanel: $('result-panel'),
   gradeBox: $('grade-box'),
@@ -145,6 +149,7 @@ function currentCfg() {
     size: parseInt(els.size.value, 10) || 212,
     thresholdMs: parseInt(els.threshold.value, 10) || 200,
     durationMs: (parseInt(els.duration.value, 10) || 10) * 1000,
+    aggressive: els.aggressive.checked,
   };
 }
 
@@ -226,6 +231,16 @@ function onClientEvent(type, payload) {
       els.startBtn.textContent = '开始测试';
       running = false;
       break;
+    case 'notice':
+      // 非致命提示(如激进模式触到 8MB 安全水位),不打断测试。
+      setStatus(`⚠ ${payload.message}`);
+      break;
+    case 'ctrlclosed':
+      if (running) {
+        setError('控制通道已关闭 — 连接中断。');
+        resetBtn();
+      }
+      break;
     case 'wsclosed':
       if (running) {
         setError('信令连接已断开');
@@ -244,6 +259,9 @@ function updateLive(l) {
   els.liveSent.textContent = `${l.sentTotal} 包`;
   els.liveRecv.textContent = `${l.recvEcho} 包`;
   els.liveRtt.textContent = ms(l.avgRtt);
+  els.liveP95.textContent = l.p95Rtt > 0 ? ms(l.p95Rtt) : '--';
+  els.liveUpLoss.textContent = pct(l.upLoss);
+  els.liveDownLoss.textContent = pct(l.downLoss);
   chart.setSeries(client.getTrendSeries());
 }
 

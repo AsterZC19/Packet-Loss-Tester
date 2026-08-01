@@ -36,7 +36,7 @@
       </div>
 
       <div class="manual-row" id="manual-row" style="display:none">
-        <label for="manual-url">服务器地址 (例如 https://probe.example.com 或 http://192.168.1.10:8787)</label>
+        <label for="manual-url">服务器地址</label>
         <input id="manual-url" type="url" placeholder="https://probe.example.com" />
       </div>
 
@@ -45,7 +45,7 @@
       <div class="grid-config">
         <div class="field">
           <label for="pps">数据包/秒</label>
-          <input id="pps" type="number" min="1" max="100" step="1" />
+          <input id="pps" type="number" min="1" max="2000" step="1" />
         </div>
         <div class="field">
           <label for="size">数据包大小（字节）</label>
@@ -56,6 +56,12 @@
           <input id="threshold" type="number" min="50" max="2000" step="10" />
         </div>
       </div>
+
+      <label class="toggle">
+        <input type="checkbox" id="aggressive" />
+        <span class="toggle-label">激进模式</span>
+        <span class="toggle-hint">固定速率发送,模拟游戏/实时应用负载,不自动降速</span>
+      </label>
 
       <div class="actions">
         <button id="start-btn" class="btn-primary">开始测试</button>
@@ -74,6 +80,9 @@
         <div class="stat"><div class="stat-label">已发送</div><div class="stat-value" id="live-sent">0</div></div>
         <div class="stat"><div class="stat-label">已回显</div><div class="stat-value" id="live-recv">0</div></div>
         <div class="stat"><div class="stat-label">平均 RTT</div><div class="stat-value" id="live-rtt">--</div></div>
+        <div class="stat"><div class="stat-label">P95 RTT</div><div class="stat-value" id="live-p95">--</div></div>
+        <div class="stat"><div class="stat-label">上行丢包</div><div class="stat-value" id="live-up-loss">--</div></div>
+        <div class="stat"><div class="stat-label">下行丢包</div><div class="stat-value" id="live-down-loss">--</div></div>
       </div>
       <div class="chart-wrap"><canvas id="chart-live"></canvas></div>
     </section>
@@ -121,7 +130,7 @@
       <div class="throughput" id="throughput">--</div>
 
       <div class="chart-wrap"><canvas id="chart-result"></canvas></div>
-      <div class="chart-note">延迟趋势:蓝色线为每 200ms 的平均往返延迟,红色点为超过阈值的样本,橙色虚线为阈值。</div>
+      <div class="chart-note">延迟趋势(每 200ms):蓝线=平均,橙线=P95,红线=最大;红色点=超过阈值的样本;橙色虚线=阈值。</div>
 
       <div class="meta" id="result-meta"></div>
     </section>
@@ -131,12 +140,15 @@
       <h2>我们测量什么</h2>
       <ul>
         <li><strong>丢包</strong> — 通过 WebRTC 数据通道(基于 UDP 的不可靠传输)发送带编号的数据包,统计服务器实收/回显率。TCP 测速会自动重传丢失的包,从而掩盖真实的丢包。</li>
-        <li><strong>往返延迟 (RTT)</strong> — 客户端发送到收到回显的完整往返时间,全程只用客户端时钟,无需任何时钟同步,是最可靠的延迟测量。</li>
-        <li><strong>抖动 (Jitter)</strong> — 相邻两次 RTT 的变化幅度,反映延迟的波动,是造成实时应用卡顿的原因。</li>
-        <li><strong>迟到包</strong> — 虽然到达,但 RTT 超过了阈值,对实时应用来说等于"迟到即无效"。</li>
+        <li><strong>往返延迟 (RTT)</strong> — 客户端发送到收到回显的完整往返时间。</li>
+        <li><strong>抖动 (Jitter)</strong> — 相邻两次 RTT 的变化幅度,反映延迟的波动。</li>
+        <li><strong>迟到包</strong> — RTT 超过了阈值。</li>
       </ul>
       <p class="note">
         说明:WebRTC 数据通道基于 SCTP,与裸 UDP 不同,带有自身的拥塞控制(cwnd)。因此本工具测量的是<em>"中等自控速率下"</em>的丢包,而非 UDP 洪泛时的丢包。预设的测试速率远低于通道上限,结果能反映真实的链路质量。
+      </p>
+      <p class="note">
+        <strong>激进模式</strong>:按设定速率固定发送,行为更像游戏/实时应用
       </p>
     </section>
   </main>

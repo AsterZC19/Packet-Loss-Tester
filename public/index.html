@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="基于 WebRTC 数据通道的真实丢包 / 延迟 / 抖动测试工具,区别于使用 TCP 的传统测速(重传会掩盖丢包)。" />
+  <title>丢包测试 — WebRTC 网络质量检测</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%230ea5e9'/%3E%3Ctext x='50' y='70' font-size='54' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='bold'%3EP%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <div class="brand">
+        <span class="logo" aria-hidden="true"></span>
+        <div>
+          <h1>丢包测试</h1>
+          <p class="tagline">基于 WebRTC 数据通道的真实网络质量检测</p>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <!-- 配置面板 -->
+    <section class="card" id="config-card">
+      <div class="config-top">
+        <div class="field">
+          <label for="server">服务器</label>
+          <select id="server"></select>
+        </div>
+        <div class="field">
+          <label for="duration">时长</label>
+          <select id="duration"></select>
+        </div>
+      </div>
+
+      <div class="manual-row" id="manual-row" style="display:none">
+        <label for="manual-url">服务器地址 (例如 https://probe.example.com 或 http://192.168.1.10:8787)</label>
+        <input id="manual-url" type="url" placeholder="https://probe.example.com" />
+      </div>
+
+      <div class="presets" id="presets" role="group" aria-label="UDP 配置预设"></div>
+
+      <div class="grid-config">
+        <div class="field">
+          <label for="pps">数据包/秒</label>
+          <input id="pps" type="number" min="1" max="100" step="1" />
+        </div>
+        <div class="field">
+          <label for="size">数据包大小（字节）</label>
+          <input id="size" type="number" min="40" max="1400" step="1" />
+        </div>
+        <div class="field">
+          <label for="threshold">最大延迟（毫秒）</label>
+          <input id="threshold" type="number" min="50" max="2000" step="10" />
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="start-btn" class="btn-primary">开始测试</button>
+        <div id="status" class="status">加载中…</div>
+      </div>
+    </section>
+
+    <!-- 实时面板 -->
+    <section class="card" id="live-panel" hidden>
+      <h2>实时统计</h2>
+      <div class="progress">
+        <div class="progress-fill" id="progress-fill"></div>
+      </div>
+      <div class="progress-label" id="progress-label">0.0s / 10s</div>
+      <div class="stat-row">
+        <div class="stat"><div class="stat-label">已发送</div><div class="stat-value" id="live-sent">0</div></div>
+        <div class="stat"><div class="stat-label">已回显</div><div class="stat-value" id="live-recv">0</div></div>
+        <div class="stat"><div class="stat-label">平均 RTT</div><div class="stat-value" id="live-rtt">--</div></div>
+      </div>
+      <div class="chart-wrap"><canvas id="chart-live"></canvas></div>
+    </section>
+
+    <!-- 结果面板 -->
+    <section class="card" id="result-panel" hidden>
+      <h2>测试结果</h2>
+
+      <div class="grade-box" id="grade-box">
+        <div class="grade-letter" id="grade-letter">–</div>
+        <div class="grade-side">
+          <div class="grade-score" id="grade-score"></div>
+          <div class="grade-reason" id="grade-reason"></div>
+        </div>
+      </div>
+
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric-label">上传丢包</div>
+          <div class="metric-value" id="up-loss">--</div>
+          <div class="metric-sub">发送 → 服务器</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">下载丢包</div>
+          <div class="metric-value" id="down-loss">--</div>
+          <div class="metric-sub">服务器回显 → 客户端</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">往返延迟 (RTT)</div>
+          <div class="metric-value" id="rtt-avg">--</div>
+          <div class="metric-sub">均值 · 中位 <span id="rtt-median">--</span> · P95 <span id="rtt-p95">--</span> · 最大 <span id="rtt-max">--</span></div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">估算单程延迟</div>
+          <div class="metric-value" id="one-way">--</div>
+          <div class="metric-sub">≈ RTT/2,假设上下行对称</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">抖动 (Jitter)</div>
+          <div class="metric-value" id="jitter-avg">--</div>
+          <div class="metric-sub">均值 · 最大 <span id="jitter-max">--</span></div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">迟到包</div>
+          <div class="metric-value" id="late">--</div>
+          <div class="metric-sub">RTT 超过阈值</div>
+        </div>
+      </div>
+
+      <div class="throughput" id="throughput">--</div>
+
+      <div class="chart-wrap"><canvas id="chart-result"></canvas></div>
+      <div class="chart-note">延迟趋势:蓝色线为每 200ms 的平均往返延迟,红色点为超过阈值的样本,橙色虚线为阈值。</div>
+
+      <div class="meta" id="result-meta"></div>
+    </section>
+
+    <!-- 方法论说明 -->
+    <section class="card info">
+      <h2>我们测量什么</h2>
+      <ul>
+        <li><strong>丢包</strong> — 通过 WebRTC 数据通道(基于 UDP 的不可靠传输)发送带编号的数据包,统计服务器实收/回显率。TCP 测速会自动重传丢失的包,从而掩盖真实的丢包。</li>
+        <li><strong>往返延迟 (RTT)</strong> — 客户端发送到收到回显的完整往返时间,全程只用客户端时钟,无需任何时钟同步,是最可靠的延迟测量。</li>
+        <li><strong>估算单程延迟</strong> — RTT/2 的近似值,前提是上下行路径对称,仅供参考。</li>
+        <li><strong>抖动 (Jitter)</strong> — 相邻两次 RTT 的变化幅度,反映延迟的波动,是造成实时应用卡顿的原因。</li>
+        <li><strong>迟到包</strong> — 虽然到达,但 RTT 超过了阈值,对实时应用来说等于"迟到即无效"。</li>
+      </ul>
+      <p class="note">
+        说明:WebRTC 数据通道基于 SCTP,与裸 UDP 不同,带有自身的拥塞控制(cwnd)。因此本工具测量的是<em>"中等自控速率下"</em>的丢包,而非 UDP 洪泛时的丢包。预设的测试速率远低于通道上限,结果能反映真实的链路质量。
+      </p>
+    </section>
+  </main>
+
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

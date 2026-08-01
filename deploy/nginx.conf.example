@@ -1,0 +1,85 @@
+# deploy/nginx.conf.example
+# nginx 反向代理模板 —— 丢包测试 (probe.starminus.uk)
+#
+# 安装到 VPS:
+#   sudo apt install nginx certbot python3-certbot-nginx
+#   sudo cp deploy/nginx.conf.example /etc/nginx/sites-available/packet-loss-tester
+#   sudo ln -s /etc/nginx/sites-available/packet-loss-tester /etc/nginx/sites-enabled/
+#   sudo nginx -t
+#   sudo certbot --nginx -d probe.starminus.uk     # 自动签证书并改写本配置开 HTTPS
+#   sudo systemctl reload nginx
+#
+# 防火墙(在 VPS 放行,本配置之外):
+#   TCP 443、TCP 80(证书签发)、TCP 8787(可选,调试直连)
+#   UDP 49000-49100   <- WebRTC 测速数据,浏览器【直连 Node 进程】,不走 nginx!
+#
+# 关键点:WebSocket 信令在 /ws,必须转发 Upgrade/Connection 头,否则页面连不上服务器。
+
+# ---- 上游:本机 Node 进程(npm start,默认 8787)----
+upstream packet-loss-tester {
+    server 127.0.0.1:8787;
+    keepalive 32;
+}
+
+# ---- HTTP:全部重定向到 HTTPS(Let's Encrypt 验证除外)----
+server {
+    listen 80;
+    listen [::]:80;
+    server_name probe.starminus.uk;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# ---- HTTPS ----
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name probe.starminus.uk;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    client_max_body_size 1m;
+
+    # ---- WebSocket 信令:/ws 必须带 Upgrade 转发 ----
+    location /ws {
+        proxy_pass http://packet-loss-tester;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 3600s;   # 信令连接测试期间保持
+        proxy_send_timeout 3600s;
+    }
+
+    # ---- 其余请求(静态页面 + /config)----
+    location / {
+        proxy_pass http://packet-loss-tester;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # ---- 可选:安全响应头 ----
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+    # ---- 可选:gzip(静态 JS/CSS 会受益)----
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript image/svg+xml;
+    gzip_min_length 1024;
+}

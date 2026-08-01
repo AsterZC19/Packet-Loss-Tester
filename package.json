@@ -1,0 +1,25 @@
+{
+  "name": "packet-loss-tester",
+  "version": "1.0.0",
+  "description": "Self-hosted WebRTC-based packet-loss / latency / jitter testing tool. Measures real UDP-style loss via WebRTC DataChannel (not TCP).",
+  "author": "AsterZC19",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node test/e2e.mjs",
+    "test:browser": "node test/browser.mjs"
+  },
+  "engines": {
+    "node": ">=18.20.0"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "node-datachannel": "^0.32.3",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.49.0"
+  }
+}

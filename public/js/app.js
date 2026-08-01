@@ -36,7 +36,6 @@ const els = {
   rttMedian: $('rtt-median'),
   rttP95: $('rtt-p95'),
   rttMax: $('rtt-max'),
-  oneWay: $('one-way'),
   jitterAvg: $('jitter-avg'),
   jitterMax: $('jitter-max'),
   late: $('late'),
@@ -274,7 +273,6 @@ function renderResults(r) {
   els.rttMedian.textContent = ms(r.medianRtt);
   els.rttP95.textContent = ms(r.p95Rtt);
   els.rttMax.textContent = ms(r.maxRtt);
-  els.oneWay.textContent = `≈ ${ms(r.oneWayEstimate)}`;
   els.jitterAvg.textContent = ms(r.jitterAvg);
   els.jitterMax.textContent = ms(r.jitterMax);
   els.late.textContent = `${r.lateCount} 包 (${pct(r.latePct)})`;

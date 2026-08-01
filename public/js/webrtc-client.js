@@ -458,7 +458,6 @@ export class WebrtcTestClient {
       medianRtt,
       p95Rtt,
       maxRtt,
-      oneWayEstimate: avgRtt / 2,
       jitterAvg,
       jitterMax,
       lateCount: this.lateCount,

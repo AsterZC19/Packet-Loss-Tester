@@ -107,11 +107,6 @@
           <div class="metric-sub">均值 · 中位 <span id="rtt-median">--</span> · P95 <span id="rtt-p95">--</span> · 最大 <span id="rtt-max">--</span></div>
         </div>
         <div class="metric">
-          <div class="metric-label">估算单程延迟</div>
-          <div class="metric-value" id="one-way">--</div>
-          <div class="metric-sub">≈ RTT/2,假设上下行对称</div>
-        </div>
-        <div class="metric">
           <div class="metric-label">抖动 (Jitter)</div>
           <div class="metric-value" id="jitter-avg">--</div>
           <div class="metric-sub">均值 · 最大 <span id="jitter-max">--</span></div>
@@ -137,7 +132,6 @@
       <ul>
         <li><strong>丢包</strong> — 通过 WebRTC 数据通道(基于 UDP 的不可靠传输)发送带编号的数据包,统计服务器实收/回显率。TCP 测速会自动重传丢失的包,从而掩盖真实的丢包。</li>
         <li><strong>往返延迟 (RTT)</strong> — 客户端发送到收到回显的完整往返时间,全程只用客户端时钟,无需任何时钟同步,是最可靠的延迟测量。</li>
-        <li><strong>估算单程延迟</strong> — RTT/2 的近似值,前提是上下行路径对称,仅供参考。</li>
         <li><strong>抖动 (Jitter)</strong> — 相邻两次 RTT 的变化幅度,反映延迟的波动,是造成实时应用卡顿的原因。</li>
         <li><strong>迟到包</strong> — 虽然到达,但 RTT 超过了阈值,对实时应用来说等于"迟到即无效"。</li>
       </ul>

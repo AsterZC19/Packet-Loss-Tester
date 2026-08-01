@@ -225,7 +225,6 @@ async function run() {
   console.log(`upload loss    : ${uploadLossPct.toFixed(3)}%`);
   console.log(`download loss  : ${downloadLossPct.toFixed(3)}%`);
   console.log(`RTT avg/med/p95/max: ${avg.toFixed(2)} / ${percentile(sorted, 0.5).toFixed(2)} / ${p95.toFixed(2)} / ${max.toFixed(2)} ms`);
-  console.log(`one-way (RTT/2): ${(avg / 2).toFixed(2)} ms (估算)`);
   console.log(`jitter avg/max : ${jitterAvg.toFixed(2)} / ${jitterMax.toFixed(2)} ms`);
   console.log(`late           : ${lateCount} (${latePct.toFixed(2)}%)`);
   console.log(`actual rate    : ${(sentTotal / (DURATION / 1000)).toFixed(0)} pps`);
